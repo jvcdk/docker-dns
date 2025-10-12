@@ -98,6 +98,7 @@ name = "docker-dns"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "hickory-client",
  "hickory-server",
  "tokio",
