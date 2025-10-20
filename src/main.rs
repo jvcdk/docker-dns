@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
+    log::info!("Starting DNS server...");
+
     let mut resolver = StaticResolver::new();
     resolver.add_mapping("my.example.local", Ipv4Addr::new(10, 11, 12, 13));
 

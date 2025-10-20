@@ -4,6 +4,7 @@ use hickory_server::authority::MessageResponseBuilder;
 use hickory_server::proto::op::{Header, MessageType, ResponseCode};
 use hickory_server::proto::rr::{RData, Record};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
+use log::error;
 use std::sync::Arc;
 
 pub struct CustomHandler {
@@ -58,7 +59,9 @@ impl RequestHandler for CustomHandler {
         match header.message_type() {
             MessageType::Query => self.handle_query(request, response_handle).await,
             MessageType::Response => {
-                panic!("unexpected message type: Response");
+                error!("Unexpected message type: Response. Dropping request.");
+                // Return early - no need to send a response to a response
+                return ResponseInfo::from(request.request_info().header.clone());
             }
         }
     }
