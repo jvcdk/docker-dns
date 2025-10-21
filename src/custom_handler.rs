@@ -60,14 +60,14 @@ impl CustomHandler {
                     header.set_authoritative(true);
 
                     // Add all IPv4 addresses
-                    for ipv4 in dns_response.ipv4_addresses {
-                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::A(ipv4.into()));
+                    for ipv4 in &dns_response.ipv4_addresses {
+                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::A((*ipv4).into()));
                         result.push(record);
                     }
 
                     // Add all IPv6 addresses
-                    for ipv6 in dns_response.ipv6_addresses {
-                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::AAAA(ipv6.into()));
+                    for ipv6 in &dns_response.ipv6_addresses {
+                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::AAAA((*ipv6).into()));
                         result.push(record);
                     }
                 } else {

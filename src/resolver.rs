@@ -24,7 +24,7 @@ impl DnsResponse {
 
 #[async_trait]
 pub trait DnsResolver: Send + Sync {
-    async fn resolve(&self, domain: &str) -> Option<DnsResponse>;
+    async fn resolve(&self, domain: &str) -> Option<Arc<DnsResponse>>;
 }
 
 pub struct StaticResolver {
@@ -51,9 +51,9 @@ impl Default for StaticResolver {
 
 #[async_trait]
 impl DnsResolver for StaticResolver {
-    async fn resolve(&self, domain: &str) -> Option<DnsResponse> {
+    async fn resolve(&self, domain: &str) -> Option<Arc<DnsResponse>> {
         self.mappings.get(domain).map(|&ip| {
-            DnsResponse::new(vec![ip], vec![])
+            Arc::new(DnsResponse::new(vec![ip], vec![]))
         })
     }
 }
@@ -75,7 +75,7 @@ impl Default for DockerResolverConfig {
 
 #[derive(Clone)]
 struct CachedNetworkData {
-    mappings: HashMap<String, DnsResponse>,
+    mappings: HashMap<String, Arc<DnsResponse>>,
     last_refresh: Option<Instant>,
 }
 
@@ -129,22 +129,22 @@ impl DockerResolver {
         Ok(())
     }
 
-    async fn fetch_and_build_mappings(&self) -> anyhow::Result<HashMap<String, DnsResponse>> 
+    async fn fetch_and_build_mappings(&self) -> anyhow::Result<HashMap<String, Arc<DnsResponse>>>
     {
         let network_infos = self.provider.list_containers_network_info().await?;
 
         let mut mappings = HashMap::new();
         for info in network_infos {
-            let response = DnsResponse::new(info.ipv4_addresses, info.ipv6_addresses);
+            let response = Arc::new(DnsResponse::new(info.ipv4_addresses, info.ipv6_addresses));
             for name in info.names {
-                mappings.insert(name, response.clone());
+                mappings.insert(name, Arc::clone(&response));
             }
         }
 
         Ok(mappings)
     }
     
-    async fn resolve_async(&self, domain: &str) -> Option<DnsResponse> {
+    async fn resolve_async(&self, domain: &str) -> Option<Arc<DnsResponse>> {
         // Read the cache first
         let (cached_result, hit_timeout_exceeded, miss_timeout_exceeded) = self.read_cache(domain).await;
 
@@ -167,18 +167,18 @@ impl DockerResolver {
         }
     }
 
-    async fn get_refreshed_cache_entry(&self, domain: &str, err_context: &str) -> Option<DnsResponse> {
+    async fn get_refreshed_cache_entry(&self, domain: &str, err_context: &str) -> Option<Arc<DnsResponse>> {
         if let Err(e) = self.refresh_cache().await {
             error!("{}: {:#}", err_context, e);
         }
 
         let cache = self.cache.read().await;
-        cache.mappings.get(domain).cloned()
+        cache.mappings.get(domain).map(Arc::clone)
     }
     
-    async fn read_cache(&self, domain: &str) -> (Option<DnsResponse>, bool, bool) {
+    async fn read_cache(&self, domain: &str) -> (Option<Arc<DnsResponse>>, bool, bool) {
         let cache = self.cache.read().await;
-        let result = cache.mappings.get(domain).cloned();
+        let result = cache.mappings.get(domain).map(Arc::clone);
         let hit_timeout_exceeded = cache.is_older_than(self.config.hit_timeout);
         let miss_timeout_exceeded = cache.is_older_than(self.config.miss_timeout);
         (result, hit_timeout_exceeded, miss_timeout_exceeded)
@@ -187,7 +187,7 @@ impl DockerResolver {
 
 #[async_trait]
 impl DnsResolver for DockerResolver {
-    async fn resolve(&self, domain: &str) -> Option<DnsResponse> {
+    async fn resolve(&self, domain: &str) -> Option<Arc<DnsResponse>> {
         self.resolve_async(domain).await
     }
 }
@@ -205,10 +205,10 @@ mod tests {
 
         let result = resolver.resolve("my.example.local").await;
 
-        assert_eq!(
-            result,
-            Some(DnsResponse::new(vec![Ipv4Addr::new(10, 11, 12, 13)], vec![]))
-        );
+        assert!(result.is_some());
+        let response = result.unwrap();
+        assert_eq!(response.ipv4_addresses, vec![Ipv4Addr::new(10, 11, 12, 13)]);
+        assert_eq!(response.ipv6_addresses, Vec::<Ipv6Addr>::new());
     }
 
     #[tokio::test]
@@ -258,10 +258,10 @@ mod tests {
 
         let result = resolver.resolve("container1").await;
 
-        assert_eq!(
-            result,
-            Some(DnsResponse::new(vec![Ipv4Addr::new(172, 17, 0, 2)], vec![]))
-        );
+        assert!(result.is_some());
+        let response = result.unwrap();
+        assert_eq!(response.ipv4_addresses, vec![Ipv4Addr::new(172, 17, 0, 2)]);
+        assert_eq!(response.ipv6_addresses, Vec::<Ipv6Addr>::new());
     }
 
     #[tokio::test]
@@ -277,13 +277,13 @@ mod tests {
 
         let result = resolver.resolve("multi-ip-container").await;
 
+        assert!(result.is_some());
+        let response = result.unwrap();
         assert_eq!(
-            result,
-            Some(DnsResponse::new(
-                vec![Ipv4Addr::new(172, 17, 0, 2), Ipv4Addr::new(172, 17, 0, 3)],
-                vec![ipv6]
-            ))
+            response.ipv4_addresses,
+            vec![Ipv4Addr::new(172, 17, 0, 2), Ipv4Addr::new(172, 17, 0, 3)]
         );
+        assert_eq!(response.ipv6_addresses, vec![ipv6]);
     }
 
     #[tokio::test]
@@ -406,10 +406,17 @@ mod tests {
         let result2 = resolver.resolve("container1.network1").await;
         let result3 = resolver.resolve("alias1").await;
 
-        let expected = Some(DnsResponse::new(vec![Ipv4Addr::new(172, 17, 0, 2)], vec![]));
+        // All should resolve to the same values
+        assert!(result1.is_some());
+        assert!(result2.is_some());
+        assert!(result3.is_some());
 
-        assert_eq!(result1, expected);
-        assert_eq!(result2, expected);
-        assert_eq!(result3, expected);
+        let response1 = result1.unwrap();
+        let response2 = result2.unwrap();
+        let response3 = result3.unwrap();
+
+        assert_eq!(response1.ipv4_addresses, vec![Ipv4Addr::new(172, 17, 0, 2)]);
+        assert_eq!(response2.ipv4_addresses, vec![Ipv4Addr::new(172, 17, 0, 2)]);
+        assert_eq!(response3.ipv4_addresses, vec![Ipv4Addr::new(172, 17, 0, 2)]);
     }
 }
