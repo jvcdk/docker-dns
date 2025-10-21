@@ -1,8 +1,26 @@
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+use crate::docker_client::{NetworkInfoProvider};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DnsResponse {
+    pub ipv4_addresses: Vec<Ipv4Addr>,
+    pub ipv6_addresses: Vec<Ipv6Addr>,
+}
+
+impl DnsResponse {
+    pub fn new(ipv4_addresses: Vec<Ipv4Addr>, ipv6_addresses: Vec<Ipv6Addr>) -> Self {
+        Self {
+            ipv4_addresses,
+            ipv6_addresses,
+        }
+    }
+}
 
 pub trait DnsResolver: Send + Sync {
-    fn resolve(&self, domain: &str) -> Option<Ipv4Addr>;
+    fn resolve(&self, domain: &str) -> Option<DnsResponse>;
 }
 
 pub struct StaticResolver {
@@ -28,14 +46,156 @@ impl Default for StaticResolver {
 }
 
 impl DnsResolver for StaticResolver {
-    fn resolve(&self, domain: &str) -> Option<Ipv4Addr> {
-        self.mappings.get(domain).copied()
+    fn resolve(&self, domain: &str) -> Option<DnsResponse> {
+        self.mappings.get(domain).map(|&ip| {
+            DnsResponse::new(vec![ip], vec![])
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DockerResolverConfig {
+    pub hit_timeout: Duration,
+    pub miss_timeout: Duration,
+}
+
+impl Default for DockerResolverConfig {
+    fn default() -> Self {
+        Self {
+            hit_timeout: Duration::from_secs(60),
+            miss_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CachedNetworkData {
+    mappings: HashMap<String, DnsResponse>,
+    last_refresh: Option<Instant>,
+}
+
+impl CachedNetworkData {
+    fn new() -> Self {
+        Self {
+            mappings: HashMap::new(),
+            last_refresh: None,
+        }
+    }
+
+    fn is_older_than(&self, duration: Duration) -> bool {
+        match self.last_refresh {
+            None => true, // Never refreshed, so consider it old
+            Some(instant) => instant.elapsed() > duration,
+        }
+    }
+}
+
+pub struct DockerResolver {
+    provider: Arc<dyn NetworkInfoProvider>,
+    config: DockerResolverConfig,
+    cache: Arc<RwLock<CachedNetworkData>>,
+}
+
+impl DockerResolver {
+    pub fn new(provider: impl NetworkInfoProvider + 'static, config: DockerResolverConfig) -> Self {
+        Self {
+            provider: Arc::new(provider),
+            config,
+            cache: Arc::new(RwLock::new(CachedNetworkData::new())),
+        }
+    }
+
+    pub fn new_with_defaults(provider: impl NetworkInfoProvider + 'static) -> Self {
+        Self::new(provider, DockerResolverConfig::default())
+    }
+
+    async fn refresh_cache(&self) -> anyhow::Result<()> {
+        let mut cache = self.cache.write().unwrap();
+
+        if let Some(last_refresh) = cache.last_refresh {
+            if last_refresh.elapsed() < self.config.miss_timeout {
+                return Ok(());
+            }
+        }
+
+        let mappings = self.fetch_and_build_mappings().await?;
+
+        cache.mappings = mappings;
+        cache.last_refresh = Some(Instant::now());
+
+        Ok(())
+    }
+
+    async fn fetch_and_build_mappings(&self) -> anyhow::Result<HashMap<String, DnsResponse>> 
+    {
+        let network_infos = self.provider.list_containers_network_info().await?;
+
+        let mut mappings = HashMap::new();
+        for info in network_infos {
+            let response = DnsResponse::new(info.ipv4_addresses, info.ipv6_addresses);
+            for name in info.names {
+                mappings.insert(name, response.clone());
+            }
+        }
+
+        Ok(mappings)
+    }
+    
+    async fn resolve_async(&self, domain: &str) -> Option<DnsResponse> {
+        // Read the cache first
+        let (cached_result, hit_timeout_exceeded, miss_timeout_exceeded) = self.read_cache(domain);
+
+        match (cached_result, hit_timeout_exceeded, miss_timeout_exceeded) {
+            // Cache hit with fresh data
+            (Some(response), false, _) => Some(response),
+
+            // Cache is older than hit timeout - refresh regardless of hit/miss
+            (_, true, _) => {
+                self.get_refreshed_cache_entry(domain, "Failed to refresh DNS cache").await
+            }
+
+            // Cache miss, but within miss timeout - return None without refresh
+            (None, false, false) => None,
+
+            // Cache miss, and older than miss timeout - refresh and retry
+            (None, _, true) => {
+                self.get_refreshed_cache_entry(domain, "Failed to refresh DNS cache on miss").await
+            }
+        }
+    }
+
+    async fn get_refreshed_cache_entry(&self, domain: &str, err_context: &str) -> Option<DnsResponse> {
+        if let Err(e) = self.refresh_cache().await {
+            log::error!("{}: {:#}", err_context, e);
+        }
+    
+        let cache = self.cache.read().unwrap();
+        cache.mappings.get(domain).cloned()
+    }
+    
+    fn read_cache(&self, domain: &str) -> (Option<DnsResponse>, bool, bool) {
+        let cache = self.cache.read().unwrap();
+        let result = cache.mappings.get(domain).cloned();
+        let hit_timeout_exceeded = cache.is_older_than(self.config.hit_timeout);
+        let miss_timeout_exceeded = cache.is_older_than(self.config.miss_timeout);
+        (result, hit_timeout_exceeded, miss_timeout_exceeded)
+    }
+}
+
+impl DnsResolver for DockerResolver {
+    fn resolve(&self, domain: &str) -> Option<DnsResponse> {
+        // Use tokio runtime to run async code in sync context
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.resolve_async(domain))
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::docker_client::NetworkInfo;
+    use async_trait::async_trait;
 
     #[test]
     fn resolves_configured_domain() {
@@ -44,7 +204,10 @@ mod tests {
 
         let result = resolver.resolve("my.example.local");
 
-        assert_eq!(result, Some(Ipv4Addr::new(10, 11, 12, 13)));
+        assert_eq!(
+            result,
+            Some(DnsResponse::new(vec![Ipv4Addr::new(10, 11, 12, 13)], vec![]))
+        );
     }
 
     #[test]
@@ -54,5 +217,198 @@ mod tests {
         let result = resolver.resolve("unknown.domain");
 
         assert_eq!(result, None);
+    }
+
+    // Tests for DockerResolver
+    struct MockNetworkInfoProvider {
+        data: Vec<NetworkInfo>,
+        call_count: Arc<RwLock<usize>>,
+    }
+
+    impl MockNetworkInfoProvider {
+        fn new(data: Vec<NetworkInfo>) -> Self {
+            Self {
+                data,
+                call_count: Arc::new(RwLock::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl NetworkInfoProvider for MockNetworkInfoProvider {
+        async fn list_containers_network_info(
+            &self,
+        ) -> Result<Vec<NetworkInfo>, anyhow::Error> {
+            let mut count = self.call_count.write().unwrap();
+            *count += 1;
+            Ok(self.data.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_resolves_container_name() {
+        let provider = MockNetworkInfoProvider::new(vec![NetworkInfo {
+            names: vec!["container1".to_string()],
+            ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2)],
+            ipv6_addresses: vec![],
+        }]);
+
+        let resolver = DockerResolver::new_with_defaults(provider);
+
+        let result = resolver.resolve_async("container1").await;
+
+        assert_eq!(
+            result,
+            Some(DnsResponse::new(vec![Ipv4Addr::new(172, 17, 0, 2)], vec![]))
+        );
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_resolves_multiple_ips() {
+        let ipv6 = "2001:db8::1".parse::<Ipv6Addr>().unwrap();
+        let provider = MockNetworkInfoProvider::new(vec![NetworkInfo {
+            names: vec!["multi-ip-container".to_string()],
+            ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2), Ipv4Addr::new(172, 17, 0, 3)],
+            ipv6_addresses: vec![ipv6],
+        }]);
+
+        let resolver = DockerResolver::new_with_defaults(provider);
+
+        let result = resolver.resolve_async("multi-ip-container").await;
+
+        assert_eq!(
+            result,
+            Some(DnsResponse::new(
+                vec![Ipv4Addr::new(172, 17, 0, 2), Ipv4Addr::new(172, 17, 0, 3)],
+                vec![ipv6]
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_caches_on_hit() {
+        let provider = MockNetworkInfoProvider::new(vec![NetworkInfo {
+            names: vec!["container1".to_string()],
+            ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2)],
+            ipv6_addresses: vec![],
+        }]);
+
+        let call_count_tracker = provider.call_count.clone();
+
+        let resolver = DockerResolver::new(provider, DockerResolverConfig::default());
+
+        // First call should fetch from provider
+        let _ = resolver.resolve_async("container1").await;
+        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+
+        // Second call should use cache
+        let _ = resolver.resolve_async("container1").await;
+        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_refreshes_on_hit_timeout() {
+        let provider = MockNetworkInfoProvider::new(vec![NetworkInfo {
+            names: vec!["container1".to_string()],
+            ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2)],
+            ipv6_addresses: vec![],
+        }]);
+
+        let call_count_tracker = provider.call_count.clone();
+
+        let config = DockerResolverConfig {
+            hit_timeout: Duration::from_millis(50),
+            miss_timeout: Duration::from_millis(10),
+        };
+
+        let resolver = DockerResolver::new(provider, config);
+
+        // First call
+        let _ = resolver.resolve_async("container1").await;
+        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+
+        // Wait for hit timeout to expire
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // Second call should refresh
+        let _ = resolver.resolve_async("container1").await;
+        assert_eq!(*call_count_tracker.read().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_returns_none_on_miss_within_miss_timeout() {
+        let provider = MockNetworkInfoProvider::new(vec![NetworkInfo {
+            names: vec!["container1".to_string()],
+            ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2)],
+            ipv6_addresses: vec![],
+        }]);
+
+        let call_count_tracker = provider.call_count.clone();
+
+        let resolver = DockerResolver::new(provider, DockerResolverConfig::default());
+
+        // First call to populate cache
+        let _ = resolver.resolve_async("container1").await;
+        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+
+        // Query unknown domain - should return None without refresh
+        let result = resolver.resolve_async("unknown").await;
+        assert_eq!(result, None);
+        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_refreshes_on_miss_after_miss_timeout() {
+        let provider = MockNetworkInfoProvider::new(vec![NetworkInfo {
+            names: vec!["container1".to_string()],
+            ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2)],
+            ipv6_addresses: vec![],
+        }]);
+
+        let call_count_tracker = provider.call_count.clone();
+
+        let config = DockerResolverConfig {
+            hit_timeout: Duration::from_secs(60),
+            miss_timeout: Duration::from_millis(50),
+        };
+
+        let resolver = DockerResolver::new(provider, config);
+
+        // First call to populate cache
+        let _ = resolver.resolve_async("container1").await;
+        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+
+        // Wait for miss timeout to expire
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // Query unknown domain - should refresh
+        let result = resolver.resolve_async("unknown").await;
+        assert_eq!(result, None);
+        assert_eq!(*call_count_tracker.read().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_handles_multiple_names_per_container() {
+        let provider = MockNetworkInfoProvider::new(vec![NetworkInfo {
+            names: vec![
+                "container1".to_string(),
+                "container1.network1".to_string(),
+                "alias1".to_string(),
+            ],
+            ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2)],
+            ipv6_addresses: vec![],
+        }]);
+
+        let resolver = DockerResolver::new_with_defaults(provider);
+
+        let result1 = resolver.resolve_async("container1").await;
+        let result2 = resolver.resolve_async("container1.network1").await;
+        let result3 = resolver.resolve_async("alias1").await;
+
+        let expected = Some(DnsResponse::new(vec![Ipv4Addr::new(172, 17, 0, 2)], vec![]));
+
+        assert_eq!(result1, expected);
+        assert_eq!(result2, expected);
+        assert_eq!(result3, expected);
     }
 }

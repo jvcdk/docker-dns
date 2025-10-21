@@ -34,12 +34,21 @@ impl CustomHandler {
 
         let mut result: Vec<Record> = vec![];
 
-        if let Some(ip) = self.resolver.resolve(&domain) {
+        if let Some(dns_response) = self.resolver.resolve(&domain) {
             header.set_response_code(ResponseCode::NoError);
             header.set_authoritative(true);
 
-            let record = Record::from_rdata(query_name.clone().into(), 60, RData::A(ip.into()));
-            result.push(record);
+            // Add all IPv4 addresses
+            for ipv4 in dns_response.ipv4_addresses {
+                let record = Record::from_rdata(query_name.clone().into(), 60, RData::A(ipv4.into()));
+                result.push(record);
+            }
+
+            // Add all IPv6 addresses
+            for ipv6 in dns_response.ipv6_addresses {
+                let record = Record::from_rdata(query_name.clone().into(), 60, RData::AAAA(ipv6.into()));
+                result.push(record);
+            }
         } else {
             header.set_response_code(ResponseCode::NXDomain);
         };
