@@ -86,7 +86,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Parse bind address and start DNS server
     let addr: SocketAddr = args.bind.parse()?;
-    let server = DnsServer::new(Arc::new(resolver), addr, suffix);
+    let ttl = args.hit_timeout as u32;
+    let server = DnsServer::new(Arc::new(resolver), addr, suffix, ttl);
 
     println!("✓ DNS server starting on {}", addr);
     println!("\nServer is running. Press Ctrl+C to stop\n");

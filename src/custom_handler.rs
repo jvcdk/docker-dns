@@ -10,11 +10,12 @@ use std::sync::Arc;
 pub struct CustomHandler {
     resolver: Arc<dyn DnsResolver>,
     suffix: String,
+    ttl: u32,
 }
 
 impl CustomHandler {
-    pub fn new(resolver: Arc<dyn DnsResolver>, suffix: String) -> Self {
-        Self { resolver, suffix }
+    pub fn new(resolver: Arc<dyn DnsResolver>, suffix: String, ttl: u32) -> Self {
+        Self { resolver, suffix, ttl }
     }
 
     fn normalize_domain(name: &str) -> String {
@@ -60,13 +61,13 @@ impl CustomHandler {
 
                     // Add all IPv4 addresses
                     for ipv4 in dns_response.ipv4_addresses {
-                        let record = Record::from_rdata(query_name.clone().into(), 60, RData::A(ipv4.into()));
+                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::A(ipv4.into()));
                         result.push(record);
                     }
 
                     // Add all IPv6 addresses
                     for ipv6 in dns_response.ipv6_addresses {
-                        let record = Record::from_rdata(query_name.clone().into(), 60, RData::AAAA(ipv6.into()));
+                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::AAAA(ipv6.into()));
                         result.push(record);
                     }
                 } else {
@@ -125,7 +126,7 @@ mod tests {
     #[test]
     fn strips_suffix_when_configured() {
         let resolver = Arc::new(StaticResolver::new());
-        let handler = CustomHandler::new(resolver, ".docker".to_string());
+        let handler = CustomHandler::new(resolver, ".docker".to_string(), 60);
 
         assert_eq!(handler.strip_suffix("myapp.docker"), Some("myapp".to_string()));
         assert_eq!(handler.strip_suffix("nginx.docker"), Some("nginx".to_string()));
@@ -135,7 +136,7 @@ mod tests {
     #[test]
     fn accepts_all_domains_when_no_suffix_configured() {
         let resolver = Arc::new(StaticResolver::new());
-        let handler = CustomHandler::new(resolver, "".to_string());
+        let handler = CustomHandler::new(resolver, "".to_string(), 60);
 
         assert_eq!(handler.strip_suffix("myapp.docker"), Some("myapp.docker".to_string()));
         assert_eq!(handler.strip_suffix("example.com"), Some("example.com".to_string()));
@@ -145,7 +146,7 @@ mod tests {
     #[test]
     fn handles_nested_domain_with_suffix() {
         let resolver = Arc::new(StaticResolver::new());
-        let handler = CustomHandler::new(resolver, ".docker".to_string());
+        let handler = CustomHandler::new(resolver, ".docker".to_string(), 60);
 
         assert_eq!(
             handler.strip_suffix("app.production.docker"),
