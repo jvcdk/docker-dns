@@ -3,6 +3,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use crate::docker_client::{NetworkInfoProvider};
+use log::error;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DnsResponse {
@@ -166,7 +167,7 @@ impl DockerResolver {
 
     async fn get_refreshed_cache_entry(&self, domain: &str, err_context: &str) -> Option<DnsResponse> {
         if let Err(e) = self.refresh_cache().await {
-            log::error!("{}: {:#}", err_context, e);
+            error!("{}: {:#}", err_context, e);
         }
     
         let cache = self.cache.read().unwrap();

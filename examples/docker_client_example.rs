@@ -2,8 +2,6 @@ use docker_dns::docker_client::{DockerClient, NetworkInfo, NetworkInfoProvider};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
-
     let client = DockerClient::new_with_defaults()?;
     display_network_info(&client).await?;
 

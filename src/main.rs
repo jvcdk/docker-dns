@@ -1,19 +1,74 @@
-use docker_dns::resolver::StaticResolver;
+use clap::Parser;
+use docker_dns::docker_client::{DockerClient, DockerClientConfig};
+use docker_dns::resolver::{DockerResolver, DockerResolverConfig};
 use docker_dns::server::DnsServer;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// DNS server that resolves Docker container names to their IP addresses
+#[derive(Parser, Debug)]
+#[command(name = "docker-dns")]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// DNS server bind address
+    #[arg(short, long, default_value = "0.0.0.0:53")]
+    bind: String,
+
+    /// Docker socket path
+    #[arg(short, long, default_value = "/var/run/docker.sock")]
+    socket: String,
+
+    /// Cache hit timeout in seconds (how long to cache successful lookups)
+    #[arg(long, default_value = "60")]
+    hit_timeout: u64,
+
+    /// Cache miss timeout in seconds (how long to wait before retrying failed lookups)
+    #[arg(long, default_value = "5")]
+    miss_timeout: u64,
+
+    /// Docker API communication timeout in seconds
+    #[arg(long, default_value = "5")]
+    docker_timeout: u64,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
-    log::info!("Starting DNS server...");
+    let args = Args::parse();
 
-    let mut resolver = StaticResolver::new();
-    resolver.add_mapping("my.example.local", Ipv4Addr::new(10, 11, 12, 13));
+    // Print configuration to stdout (always visible)
+    println!("Docker DNS Server v{}", env!("CARGO_PKG_VERSION"));
+    println!("Configuration:");
+    println!("  Bind address: {}", args.bind);
+    println!("  Docker socket: {}", args.socket);
+    println!("  Hit timeout: {}s", args.hit_timeout);
+    println!("  Miss timeout: {}s", args.miss_timeout);
+    println!("  Docker timeout: {}s", args.docker_timeout);
+    println!();
 
-    let addr: SocketAddr = "0.0.0.0:53".parse()?;
+
+    // Create Docker client
+    let docker_config = DockerClientConfig {
+        socket_path: args.socket,
+        timeout_seconds: args.docker_timeout,
+    };
+    let docker_client = DockerClient::new(docker_config)?;
+    println!("✓ Connected to Docker daemon");
+
+    // Create DNS resolver with caching
+    let resolver_config = DockerResolverConfig {
+        hit_timeout: Duration::from_secs(args.hit_timeout),
+        miss_timeout: Duration::from_secs(args.miss_timeout),
+    };
+    let resolver = DockerResolver::new(docker_client, resolver_config);
+    println!("✓ DNS resolver initialized");
+
+    // Parse bind address and start DNS server
+    let addr: SocketAddr = args.bind.parse()?;
     let server = DnsServer::new(Arc::new(resolver), addr);
 
-    println!("DNS server starting on {}", addr);
+    println!("✓ DNS server starting on {}", addr);
+    println!("\nServer is running. Press Ctrl+C to stop\n");
+
     server.run().await
 }
