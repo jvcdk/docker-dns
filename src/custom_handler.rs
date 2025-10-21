@@ -2,7 +2,7 @@ use crate::resolver::DnsResolver;
 use async_trait::async_trait;
 use hickory_server::authority::MessageResponseBuilder;
 use hickory_server::proto::op::{Header, MessageType, ResponseCode};
-use hickory_server::proto::rr::{RData, Record};
+use hickory_server::proto::rr::{RData, Record, RecordType};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use log::error;
 use std::sync::Arc;
@@ -44,6 +44,7 @@ impl CustomHandler {
     ) -> ResponseInfo {
         let request_info = request.request_info();
         let query_name = request_info.query.name();
+        let query_type = request_info.query.query_type();
         let domain = Self::normalize_domain(&query_name.to_string());
 
         let builder = MessageResponseBuilder::from_message_request(request);
@@ -59,16 +60,34 @@ impl CustomHandler {
                     header.set_response_code(ResponseCode::NoError);
                     header.set_authoritative(true);
 
-                    // Add all IPv4 addresses
-                    for ipv4 in &dns_response.ipv4_addresses {
-                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::A((*ipv4).into()));
-                        result.push(record);
-                    }
-
-                    // Add all IPv6 addresses
-                    for ipv6 in &dns_response.ipv6_addresses {
-                        let record = Record::from_rdata(query_name.clone().into(), self.ttl, RData::AAAA((*ipv6).into()));
-                        result.push(record);
+                    // Filter records based on query type
+                    match query_type {
+                        RecordType::A => {
+                            // Only return A records for A queries
+                            for ipv4 in &dns_response.ipv4_addresses {
+                                let record = Record::from_rdata(
+                                    query_name.clone().into(),
+                                    self.ttl,
+                                    RData::A((*ipv4).into())
+                                );
+                                result.push(record);
+                            }
+                        }
+                        RecordType::AAAA => {
+                            // Only return AAAA records for AAAA queries
+                            for ipv6 in &dns_response.ipv6_addresses {
+                                let record = Record::from_rdata(
+                                    query_name.clone().into(),
+                                    self.ttl,
+                                    RData::AAAA((*ipv6).into())
+                                );
+                                result.push(record);
+                            }
+                        }
+                        _ => {
+                            // For other query types, return empty response with NoError
+                            // This is standard DNS behavior for unsupported query types
+                        }
                     }
                 } else {
                     // Container not found
