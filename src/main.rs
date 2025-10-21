@@ -5,6 +5,7 @@ use docker_dns::server::DnsServer;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::signal;
 
 /// DNS server that resolves Docker container names to their IP addresses
 #[derive(Parser, Debug)]
@@ -90,5 +91,11 @@ async fn main() -> anyhow::Result<()> {
     println!("✓ DNS server starting on {}", addr);
     println!("\nServer is running. Press Ctrl+C to stop\n");
 
-    server.run().await
+    tokio::select! {
+        result = server.run() => result,
+        _ = signal::ctrl_c() => {
+            println!("\nShutdown signal received, stopping server...");
+            Ok(())
+        }
+    }
 }
