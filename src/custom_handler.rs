@@ -55,7 +55,7 @@ impl CustomHandler {
         match self.strip_suffix(&domain) {
             Some(container_name) => {
                 // Domain matches suffix (or no suffix configured), look it up
-                if let Some(dns_response) = self.resolver.resolve(&container_name) {
+                if let Some(dns_response) = self.resolver.resolve(&container_name).await {
                     header.set_response_code(ResponseCode::NoError);
                     header.set_authoritative(true);
 
