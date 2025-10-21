@@ -117,7 +117,13 @@ impl CustomHandler {
         match response_handle.send_response(response).await {
             Ok(info) => info,
             Err(e) => {
-                error!("Failed to send DNS response: {:#}", e);
+                error!(
+                    "Failed to send DNS response for query '{}' (type: {:?}, {} records): {:#}",
+                    domain,
+                    query_type,
+                    result.len(),
+                    e
+                );
                 ResponseInfo::from(*request_info.header)
             }
         }
