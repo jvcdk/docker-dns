@@ -4,8 +4,16 @@ use hickory_server::authority::MessageResponseBuilder;
 use hickory_server::proto::op::{Header, MessageType, ResponseCode};
 use hickory_server::proto::rr::{RData, Record, RecordType};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
-use log::error;
+use log::{error, warn};
 use std::sync::Arc;
+
+// Standard DNS UDP packet size limit (without EDNS)
+const DNS_UDP_MAX_SIZE: usize = 512;
+
+// Estimated overhead for DNS header and question section
+// Header: 12 bytes, Question: ~name_length + 4 bytes
+// We use a conservative estimate
+const DNS_OVERHEAD_ESTIMATE: usize = 50;
 
 pub struct CustomHandler {
     resolver: Arc<dyn DnsResolver>,
@@ -60,7 +68,9 @@ impl CustomHandler {
                     header.set_response_code(ResponseCode::NoError);
                     header.set_authoritative(true);
 
-                    // Filter records based on query type
+                    // Build records based on query type
+                    let mut records = Vec::new();
+
                     match query_type {
                         RecordType::A => {
                             // Only return A records for A queries
@@ -70,7 +80,7 @@ impl CustomHandler {
                                     self.ttl,
                                     RData::A((*ipv4).into())
                                 );
-                                result.push(record);
+                                records.push(record);
                             }
                         }
                         RecordType::AAAA => {
@@ -81,7 +91,7 @@ impl CustomHandler {
                                     self.ttl,
                                     RData::AAAA((*ipv6).into())
                                 );
-                                result.push(record);
+                                records.push(record);
                             }
                         }
                         _ => {
@@ -89,6 +99,9 @@ impl CustomHandler {
                             // This is standard DNS behavior for unsupported query types
                         }
                     }
+
+                    // Apply size limit to prevent exceeding UDP packet size
+                    result = Self::apply_size_limit(records, &domain, query_name.len());
                 } else {
                     // Container not found
                     header.set_response_code(ResponseCode::NXDomain);
@@ -108,6 +121,47 @@ impl CustomHandler {
                 ResponseInfo::from(*request_info.header)
             }
         }
+    }
+
+    /// Applies DNS UDP packet size limit, preferring to keep records that fit
+    /// Returns as many records as will fit within the size limit
+    fn apply_size_limit(records: Vec<Record>, domain: &str, query_name_len: usize) -> Vec<Record> {
+        if records.is_empty() {
+            return records;
+        }
+
+        let available_space = DNS_UDP_MAX_SIZE.saturating_sub(DNS_OVERHEAD_ESTIMATE + query_name_len);
+
+        let mut result = Vec::new();
+        let mut current_size = 0;
+        let total_records = records.len();
+
+        for record in records {
+            // Estimate record size:
+            // Name (compressed, usually 2 bytes pointer)
+            // Type (2 bytes) + Class (2 bytes) + TTL (4 bytes) + RDLength (2 bytes)
+            // RData: 4 bytes for A, 16 bytes for AAAA
+            let record_size = match record.data() {
+                Some(RData::A(_)) => 2 + 2 + 2 + 4 + 2 + 4,  // ~16 bytes
+                Some(RData::AAAA(_)) => 2 + 2 + 2 + 4 + 2 + 16,  // ~28 bytes
+                _ => 0, // We don't have any other records
+            };
+
+            if current_size + record_size > available_space {
+                warn!(
+                    "DNS response for '{}' truncated: {} records included, {} dropped (size limit)",
+                    domain,
+                    result.len(),
+                    total_records - result.len()
+                );
+                break;
+            }
+
+            current_size += record_size;
+            result.push(record);
+        }
+
+        result
     }
 }
 
