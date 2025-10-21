@@ -2,6 +2,8 @@ use clap::Parser;
 use docker_dns::docker_client::{DockerClient, DockerClientConfig};
 use docker_dns::resolver::{DockerResolver, DockerResolverConfig};
 use docker_dns::server::DnsServer;
+use env_logger::Builder;
+use log::LevelFilter;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,6 +44,11 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    // Initialize logger
+    Builder::from_default_env()
+        .filter_level(LevelFilter::Info)
+        .init();
 
     // Normalize suffix to ensure it starts with a dot if not empty
     let suffix = if args.suffix.is_empty() {
