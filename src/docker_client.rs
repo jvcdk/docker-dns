@@ -49,7 +49,7 @@ impl DockerClient {
             config.timeout_seconds,
             bollard::API_DEFAULT_VERSION,
         )
-        .context("Failed to connect to Docker socket")?;
+        .with_context(|| format!("Failed to connect to Docker socket at {}", config.socket_path))?;
 
         Ok(Self { client })
     }
