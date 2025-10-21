@@ -9,15 +9,31 @@ use std::sync::Arc;
 
 pub struct CustomHandler {
     resolver: Arc<dyn DnsResolver>,
+    suffix: String,
 }
 
 impl CustomHandler {
-    pub fn new(resolver: Arc<dyn DnsResolver>) -> Self {
-        Self { resolver }
+    pub fn new(resolver: Arc<dyn DnsResolver>, suffix: String) -> Self {
+        Self { resolver, suffix }
     }
 
     fn normalize_domain(name: &str) -> String {
         name.trim_end_matches('.').to_string()
+    }
+
+    /// Checks if the domain matches the configured suffix and strips it
+    /// Returns Some(stripped_name) if it matches, None if it doesn't
+    fn strip_suffix(&self, domain: &str) -> Option<String> {
+        if self.suffix.is_empty() {
+            return Some(domain.to_string()); // No suffix filter, accept all
+        }
+
+        if domain.ends_with(&self.suffix) {
+            let stripped = &domain[..domain.len() - self.suffix.len()];
+            Some(stripped.to_string())
+        } else {
+            None // Domain doesn't match suffix, reject
+        }
     }
 
     async fn handle_query<R: ResponseHandler>(
@@ -34,24 +50,36 @@ impl CustomHandler {
 
         let mut result: Vec<Record> = vec![];
 
-        if let Some(dns_response) = self.resolver.resolve(&domain) {
-            header.set_response_code(ResponseCode::NoError);
-            header.set_authoritative(true);
+        // Check if domain matches suffix filter and strip it
+        match self.strip_suffix(&domain) {
+            Some(container_name) => {
+                // Domain matches suffix (or no suffix configured), look it up
+                if let Some(dns_response) = self.resolver.resolve(&container_name) {
+                    header.set_response_code(ResponseCode::NoError);
+                    header.set_authoritative(true);
 
-            // Add all IPv4 addresses
-            for ipv4 in dns_response.ipv4_addresses {
-                let record = Record::from_rdata(query_name.clone().into(), 60, RData::A(ipv4.into()));
-                result.push(record);
-            }
+                    // Add all IPv4 addresses
+                    for ipv4 in dns_response.ipv4_addresses {
+                        let record = Record::from_rdata(query_name.clone().into(), 60, RData::A(ipv4.into()));
+                        result.push(record);
+                    }
 
-            // Add all IPv6 addresses
-            for ipv6 in dns_response.ipv6_addresses {
-                let record = Record::from_rdata(query_name.clone().into(), 60, RData::AAAA(ipv6.into()));
-                result.push(record);
+                    // Add all IPv6 addresses
+                    for ipv6 in dns_response.ipv6_addresses {
+                        let record = Record::from_rdata(query_name.clone().into(), 60, RData::AAAA(ipv6.into()));
+                        result.push(record);
+                    }
+                } else {
+                    // Container not found
+                    header.set_response_code(ResponseCode::NXDomain);
+                }
             }
-        } else {
-            header.set_response_code(ResponseCode::NXDomain);
-        };
+            None => {
+                // Domain doesn't match suffix filter, refuse to answer
+                header.set_response_code(ResponseCode::Refused);
+            }
+        }
+
         let response = builder.build(header, result.iter(), &[], &[], &[]);
         response_handle.send_response(response).await.unwrap()
     }
@@ -79,11 +107,43 @@ impl RequestHandler for CustomHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resolver::StaticResolver;
 
     #[test]
     fn normalizes_domain_by_removing_trailing_dot() {
         assert_eq!(CustomHandler::normalize_domain("example.com."), "example.com");
         assert_eq!(CustomHandler::normalize_domain("example.com"), "example.com");
         assert_eq!(CustomHandler::normalize_domain("my.example.local."), "my.example.local");
+    }
+
+    #[test]
+    fn strips_suffix_when_configured() {
+        let resolver = Arc::new(StaticResolver::new());
+        let handler = CustomHandler::new(resolver, ".docker".to_string());
+
+        assert_eq!(handler.strip_suffix("myapp.docker"), Some("myapp".to_string()));
+        assert_eq!(handler.strip_suffix("nginx.docker"), Some("nginx".to_string()));
+        assert_eq!(handler.strip_suffix("example.com"), None);
+    }
+
+    #[test]
+    fn accepts_all_domains_when_no_suffix_configured() {
+        let resolver = Arc::new(StaticResolver::new());
+        let handler = CustomHandler::new(resolver, "".to_string());
+
+        assert_eq!(handler.strip_suffix("myapp.docker"), Some("myapp.docker".to_string()));
+        assert_eq!(handler.strip_suffix("example.com"), Some("example.com".to_string()));
+        assert_eq!(handler.strip_suffix("anything"), Some("anything".to_string()));
+    }
+
+    #[test]
+    fn handles_nested_domain_with_suffix() {
+        let resolver = Arc::new(StaticResolver::new());
+        let handler = CustomHandler::new(resolver, ".docker".to_string());
+
+        assert_eq!(
+            handler.strip_suffix("app.production.docker"),
+            Some("app.production".to_string())
+        );
     }
 }

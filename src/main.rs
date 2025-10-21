@@ -30,11 +30,26 @@ struct Args {
     /// Docker API communication timeout in seconds
     #[arg(long, default_value = "5")]
     docker_timeout: u64,
+
+    /// DNS suffix to filter queries (e.g., "docker" or ".docker")
+    /// Only queries ending with this suffix will be resolved
+    /// The suffix will be stripped before looking up container names
+    #[arg(long, default_value = "")]
+    suffix: String,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    // Normalize suffix to ensure it starts with a dot if not empty
+    let suffix = if args.suffix.is_empty() {
+        String::new()
+    } else if args.suffix.starts_with('.') {
+        args.suffix
+    } else {
+        format!(".{}", args.suffix)
+    };
 
     // Print configuration to stdout (always visible)
     println!("Docker DNS Server v{}", env!("CARGO_PKG_VERSION"));
@@ -44,6 +59,11 @@ async fn main() -> anyhow::Result<()> {
     println!("  Hit timeout: {}s", args.hit_timeout);
     println!("  Miss timeout: {}s", args.miss_timeout);
     println!("  Docker timeout: {}s", args.docker_timeout);
+    if suffix.is_empty() {
+        println!("  DNS suffix: (none - resolving all queries)");
+    } else {
+        println!("  DNS suffix: {}", suffix);
+    }
     println!();
 
 
@@ -65,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Parse bind address and start DNS server
     let addr: SocketAddr = args.bind.parse()?;
-    let server = DnsServer::new(Arc::new(resolver), addr);
+    let server = DnsServer::new(Arc::new(resolver), addr, suffix);
 
     println!("✓ DNS server starting on {}", addr);
     println!("\nServer is running. Press Ctrl+C to stop\n");

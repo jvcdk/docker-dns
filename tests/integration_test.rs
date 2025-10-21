@@ -15,7 +15,7 @@ async fn test_resolves_my_example_local_to_static_ip() {
     let mut resolver = StaticResolver::new();
     resolver.add_mapping("my.example.local", Ipv4Addr::new(10, 11, 12, 13));
 
-    let server = DnsServer::new(Arc::new(resolver), server_addr);
+    let server = DnsServer::new(Arc::new(resolver), server_addr, "".to_string());
 
     tokio::spawn(async move {
         server.run().await.unwrap();
