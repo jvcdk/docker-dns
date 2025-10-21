@@ -14,29 +14,29 @@ use tokio::signal;
 #[command(name = "docker-dns")]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// DNS server bind address
+    /// DNS server bind address.
     #[arg(short, long, default_value = "0.0.0.0:53")]
     bind: String,
 
-    /// Docker socket path
+    /// Docker socket path.
     #[arg(short, long, default_value = "/var/run/docker.sock")]
     socket: String,
 
-    /// Cache hit timeout in seconds (how long to cache successful lookups)
+    /// Cache hit timeout in seconds (how long to cache successful lookups).
     #[arg(long, default_value = "60")]
     hit_timeout: u64,
 
-    /// Cache miss timeout in seconds (how long to wait before retrying failed lookups)
+    /// Cache miss timeout in seconds (how long to wait before retrying failed lookups).
     #[arg(long, default_value = "5")]
     miss_timeout: u64,
 
-    /// Docker API communication timeout in seconds
+    /// Docker API communication timeout in seconds.
     #[arg(long, default_value = "5")]
     docker_timeout: u64,
 
-    /// DNS suffix to filter queries (e.g., "docker" or ".docker")
-    /// Only queries ending with this suffix will be resolved
-    /// The suffix will be stripped before looking up container names
+    /// DNS suffix to filter queries (e.g., "docker" or ".docker").
+    /// Only queries ending with this suffix will be resolved.
+    /// The suffix will be stripped before looking up container names.
     #[arg(long, default_value = "")]
     suffix: String,
 }
