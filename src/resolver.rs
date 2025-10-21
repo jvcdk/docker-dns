@@ -111,7 +111,8 @@ impl DockerResolver {
     }
 
     async fn refresh_cache(&self) -> anyhow::Result<()> {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write()
+            .expect("DNS cache lock poisoned");
 
         if let Some(last_refresh) = cache.last_refresh {
             if last_refresh.elapsed() < self.config.miss_timeout {
@@ -169,13 +170,15 @@ impl DockerResolver {
         if let Err(e) = self.refresh_cache().await {
             error!("{}: {:#}", err_context, e);
         }
-    
-        let cache = self.cache.read().unwrap();
+
+        let cache = self.cache.read()
+            .expect("DNS cache lock poisoned");
         cache.mappings.get(domain).cloned()
     }
     
     fn read_cache(&self, domain: &str) -> (Option<DnsResponse>, bool, bool) {
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read()
+            .expect("DNS cache lock poisoned");
         let result = cache.mappings.get(domain).cloned();
         let hit_timeout_exceeded = cache.is_older_than(self.config.hit_timeout);
         let miss_timeout_exceeded = cache.is_older_than(self.config.miss_timeout);
@@ -240,7 +243,8 @@ mod tests {
         async fn list_containers_network_info(
             &self,
         ) -> Result<Vec<NetworkInfo>, anyhow::Error> {
-            let mut count = self.call_count.write().unwrap();
+            let mut count = self.call_count.write()
+                .expect("Mock call counter lock poisoned");
             *count += 1;
             Ok(self.data.clone())
         }
@@ -300,11 +304,11 @@ mod tests {
 
         // First call should fetch from provider
         let _ = resolver.resolve_async("container1").await;
-        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 1);
 
         // Second call should use cache
         let _ = resolver.resolve_async("container1").await;
-        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 1);
     }
 
     #[tokio::test]
@@ -326,14 +330,14 @@ mod tests {
 
         // First call
         let _ = resolver.resolve_async("container1").await;
-        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 1);
 
         // Wait for hit timeout to expire
         tokio::time::sleep(Duration::from_millis(60)).await;
 
         // Second call should refresh
         let _ = resolver.resolve_async("container1").await;
-        assert_eq!(*call_count_tracker.read().unwrap(), 2);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 2);
     }
 
     #[tokio::test]
@@ -350,12 +354,12 @@ mod tests {
 
         // First call to populate cache
         let _ = resolver.resolve_async("container1").await;
-        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 1);
 
         // Query unknown domain - should return None without refresh
         let result = resolver.resolve_async("unknown").await;
         assert_eq!(result, None);
-        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 1);
     }
 
     #[tokio::test]
@@ -377,7 +381,7 @@ mod tests {
 
         // First call to populate cache
         let _ = resolver.resolve_async("container1").await;
-        assert_eq!(*call_count_tracker.read().unwrap(), 1);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 1);
 
         // Wait for miss timeout to expire
         tokio::time::sleep(Duration::from_millis(60)).await;
@@ -385,7 +389,7 @@ mod tests {
         // Query unknown domain - should refresh
         let result = resolver.resolve_async("unknown").await;
         assert_eq!(result, None);
-        assert_eq!(*call_count_tracker.read().unwrap(), 2);
+        assert_eq!(*call_count_tracker.read().expect("Lock poisoned"), 2);
     }
 
     #[tokio::test]
