@@ -87,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
     let resolver_config = DockerResolverConfig {
         hit_timeout: Duration::from_secs(args.hit_timeout),
         miss_timeout: Duration::from_secs(args.miss_timeout),
+        refresh_timeout: Duration::from_secs(args.docker_timeout),
     };
     let resolver = DockerResolver::new(docker_client, resolver_config);
     println!("✓ DNS resolver initialized");

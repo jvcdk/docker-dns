@@ -62,6 +62,7 @@ impl DnsResolver for StaticResolver {
 pub struct DockerResolverConfig {
     pub hit_timeout: Duration,
     pub miss_timeout: Duration,
+    pub refresh_timeout: Duration,
 }
 
 impl Default for DockerResolverConfig {
@@ -69,6 +70,7 @@ impl Default for DockerResolverConfig {
         Self {
             hit_timeout: Duration::from_secs(60),
             miss_timeout: Duration::from_secs(5),
+            refresh_timeout: Duration::from_secs(5),
         }
     }
 }
@@ -121,7 +123,12 @@ impl DockerResolver {
             return Ok(());
         }
 
-        let mappings = self.fetch_and_build_mappings().await?;
+        let mappings = tokio::time::timeout(
+            self.config.refresh_timeout,
+            self.fetch_and_build_mappings()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Docker API refresh timeout after {:?}", self.config.refresh_timeout))??;
 
         cache.mappings = mappings;
         cache.last_refresh = Some(Instant::now());
@@ -320,6 +327,7 @@ mod tests {
         let config = DockerResolverConfig {
             hit_timeout: Duration::from_millis(50),
             miss_timeout: Duration::from_millis(10),
+            refresh_timeout: Duration::from_secs(5),
         };
 
         let resolver = DockerResolver::new(provider, config);
@@ -371,6 +379,7 @@ mod tests {
         let config = DockerResolverConfig {
             hit_timeout: Duration::from_secs(60),
             miss_timeout: Duration::from_millis(50),
+            refresh_timeout: Duration::from_secs(5),
         };
 
         let resolver = DockerResolver::new(provider, config);
@@ -418,5 +427,47 @@ mod tests {
         assert_eq!(response1.ipv4_addresses, vec![Ipv4Addr::new(172, 17, 0, 2)]);
         assert_eq!(response2.ipv4_addresses, vec![Ipv4Addr::new(172, 17, 0, 2)]);
         assert_eq!(response3.ipv4_addresses, vec![Ipv4Addr::new(172, 17, 0, 2)]);
+    }
+
+    // Mock provider that simulates a slow Docker API
+    struct SlowNetworkInfoProvider {
+        delay: Duration,
+    }
+
+    impl SlowNetworkInfoProvider {
+        fn new(delay: Duration) -> Self {
+            Self { delay }
+        }
+    }
+
+    #[async_trait]
+    impl NetworkInfoProvider for SlowNetworkInfoProvider {
+        async fn list_containers_network_info(&self) -> Result<Vec<NetworkInfo>, anyhow::Error> {
+            tokio::time::sleep(self.delay).await;
+            Ok(vec![NetworkInfo {
+                names: vec!["slow-container".to_string()],
+                ipv4_addresses: vec![Ipv4Addr::new(172, 17, 0, 2)],
+                ipv6_addresses: vec![],
+            }])
+        }
+    }
+
+    #[tokio::test]
+    async fn docker_resolver_times_out_on_slow_refresh() {
+        let provider = SlowNetworkInfoProvider::new(Duration::from_millis(200));
+
+        let config = DockerResolverConfig {
+            hit_timeout: Duration::from_secs(60),
+            miss_timeout: Duration::from_secs(5),
+            refresh_timeout: Duration::from_millis(50), // Short timeout
+        };
+
+        let resolver = DockerResolver::new(provider, config);
+
+        // First call should timeout
+        let result = resolver.resolve("slow-container").await;
+
+        // Should return None because the refresh timed out
+        assert_eq!(result, None);
     }
 }
