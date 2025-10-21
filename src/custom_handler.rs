@@ -81,7 +81,13 @@ impl CustomHandler {
         }
 
         let response = builder.build(header, result.iter(), &[], &[], &[]);
-        response_handle.send_response(response).await.unwrap()
+        match response_handle.send_response(response).await {
+            Ok(info) => info,
+            Err(e) => {
+                error!("Failed to send DNS response: {:#}", e);
+                ResponseInfo::from(request_info.header.clone())
+            }
+        }
     }
 }
 
