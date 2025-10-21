@@ -101,11 +101,11 @@ fn get_ip_addresses(container: bollard::secret::ContainerSummary) -> (Vec<Ipv4Ad
     };
 
     for (_, endpoint) in networks_data {
-        if let Some(ipv4) = endpoint.ip_address.as_deref().and_then(|ip| parse_ipv4(ip)) {
+        if let Some(ipv4) = endpoint.ip_address.as_deref().and_then(parse_ipv4) {
             ipv4_addresses.push(ipv4);
         }
 
-        if let Some(ipv6) = endpoint.global_ipv6_address.as_deref().and_then(|ip| parse_ipv6(ip)) {
+        if let Some(ipv6) = endpoint.global_ipv6_address.as_deref().and_then(parse_ipv6) {
             ipv6_addresses.push(ipv6);
         }
     }
@@ -131,7 +131,7 @@ fn get_names(container: &bollard::secret::ContainerSummary) -> Vec<String> {
     if let Some(names) = &container.names {
         names
             .iter()
-            .map(|name| name.strip_prefix_sane(&"/").to_owned())
+            .map(|name| name.strip_prefix_sane("/").to_owned())
             .collect()
     } else {
         vec![]

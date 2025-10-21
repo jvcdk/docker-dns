@@ -86,7 +86,7 @@ impl CustomHandler {
             Ok(info) => info,
             Err(e) => {
                 error!("Failed to send DNS response: {:#}", e);
-                ResponseInfo::from(request_info.header.clone())
+                ResponseInfo::from(*request_info.header)
             }
         }
     }
@@ -105,7 +105,7 @@ impl RequestHandler for CustomHandler {
             MessageType::Response => {
                 error!("Unexpected message type: Response. Dropping request.");
                 // Return early - no need to send a response to a response
-                return ResponseInfo::from(request.request_info().header.clone());
+                return ResponseInfo::from(*request.request_info().header);
             }
         }
     }

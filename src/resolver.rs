@@ -117,10 +117,8 @@ impl DockerResolver {
     async fn refresh_cache(&self) -> anyhow::Result<()> {
         let mut cache = self.cache.write().await;
 
-        if let Some(last_refresh) = cache.last_refresh {
-            if last_refresh.elapsed() < self.config.miss_timeout {
-                return Ok(());
-            }
+        if let Some(last_refresh) = cache.last_refresh && last_refresh.elapsed() < self.config.miss_timeout {
+            return Ok(());
         }
 
         let mappings = self.fetch_and_build_mappings().await?;
