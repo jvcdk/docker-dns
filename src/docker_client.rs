@@ -14,7 +14,7 @@ impl Default for DockerClientConfig {
     fn default() -> Self {
         Self {
             socket_path: "/var/run/docker.sock".to_string(),
-            timeout_seconds: 120,
+            timeout_seconds: 10,
         }
     }
 }
