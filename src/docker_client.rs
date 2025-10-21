@@ -128,12 +128,14 @@ fn parse_ipv6(ip_str: &str) -> Option<Ipv6Addr> {
 }
 
 fn get_names(container: &bollard::secret::ContainerSummary) -> Vec<String> {
-    if let Some(names) = &container.names {
-        names
-            .iter()
-            .map(|name| name.strip_prefix_sane("/").to_owned())
-            .collect()
-    } else {
-        vec![]
-    }
+    container
+        .names
+        .as_ref()
+        .map(|names| {
+            names
+                .iter()
+                .map(|name| name.strip_prefix_sane("/").to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
