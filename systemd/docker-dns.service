@@ -1,0 +1,34 @@
+[Unit]
+Description=Docker DNS Server
+Documentation=https://github.com/jvcdk/docker-dns
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=nobody
+Group=docker
+
+# Path to the docker-dns binary (adjust to match your installation)
+ExecStart=/usr/local/bin/docker-dns \
+    --bind 0.0.0.0:5053 \
+    --suffix docker
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/run/docker.sock
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=docker-dns
+
+[Install]
+WantedBy=multi-user.target
