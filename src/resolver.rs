@@ -128,10 +128,10 @@ impl DockerResolver {
             self.fetch_and_build_mappings()
         )
         .await
-        .map_err(|_| anyhow::anyhow!("Docker API refresh timeout after {:?}", self.config.refresh_timeout))??;
+        .map_err(|_| anyhow::anyhow!("Docker API refresh timeout after {:?}", self.config.refresh_timeout));
 
-        cache.mappings = mappings;
         cache.last_refresh = Some(Instant::now());
+        cache.mappings = mappings??; // Throw error after last_refresh has been set
 
         Ok(())
     }
