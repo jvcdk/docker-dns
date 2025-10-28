@@ -53,6 +53,9 @@ Optional: Run `resolvectl status` to view and save your current configuration (f
 sudo cp systemd/docker-dns.conf /etc/systemd/resolved.conf.d/
 ```
 
+Note the option to enable `.docker` domain search. See [`docker-dns.conf`](docker-dns.conf) for info.
+
+
 ### 3. Ensure that resolved is configured to use DNS Stub mode
 
 Edit `/etc/systemd/resolved.conf`, veryifying that `DNSStubListener=yes`.
