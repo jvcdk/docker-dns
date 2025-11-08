@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bollard::Docker;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use strip_prefix_suffix_sane::StripPrefixSuffixSane;
+
+use crate::strip_prefix_sane::SaneStrip;
 
 #[derive(Debug, Clone)]
 pub struct DockerClientConfig {

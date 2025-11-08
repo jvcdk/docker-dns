@@ -316,7 +316,6 @@ dependencies = [
  "hickory-client",
  "hickory-server",
  "log",
- "strip-prefix-suffix-sane",
  "tokio",
 ]
 
@@ -1360,12 +1359,6 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
-
-[[package]]
-name = "strip-prefix-suffix-sane"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c4b32165ad011866862311f2e99f3b67259a4d1772203988d52f3d1b21b7ee6"
 
 [[package]]
 name = "strsim"

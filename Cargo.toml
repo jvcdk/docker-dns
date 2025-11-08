@@ -11,7 +11,6 @@ async-trait = "0.1"
 log = "0.4"
 env_logger = "0.11"
 bollard = "0.18"
-strip-prefix-suffix-sane = "0.1"
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
