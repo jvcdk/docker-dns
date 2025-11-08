@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 
-/// DNS server that resolves Docker container names to their IP addresses
+/// DNS server that resolves Docker container names to their IP addresses.
+/// Source: https://github.com/jvcdk/docker-dns
 #[derive(Parser, Debug)]
 #[command(name = "docker-dns")]
 #[command(author, version, about, long_about = None)]

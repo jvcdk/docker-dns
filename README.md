@@ -6,7 +6,7 @@ A DNS server that resolves Docker container names to their IP addresses.
 
 ```txt
 $ docker-dns --help
-DNS server that resolves Docker container names to their IP addresses
+DNS server that resolves Docker container names to their IP addresses. Source: https://github.com/jvcdk/docker-dns
 
 Usage: docker-dns [OPTIONS]
 
