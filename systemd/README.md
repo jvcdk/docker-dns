@@ -58,7 +58,14 @@ Note the option to enable `.docker` domain search. See [`docker-dns.conf`](docke
 
 ### 3. Ensure that resolved is configured to use DNS Stub mode
 
-Edit `/etc/systemd/resolved.conf`, veryifying that `DNSStubListener=yes`.
+1. Edit `/etc/systemd/resolved.conf`, verifying that `DNSStubListener=yes`.
+2. Ensure that `/etc/resolv.conf` is a symlink to `/run/systemd/resolve/stub-resolv.conf`:
+
+   ```sh
+   sudo mv -i /etc/resolv.conf /etc/resolv.conf.org
+   sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+   ```
+
 
 ### 4. Restart services
 
